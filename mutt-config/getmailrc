@@ -1,0 +1,17 @@
+[options]
+verbose = 1
+read_all = false
+delete = false
+message_log = ~/Mail/getmail.log
+
+[retriever]
+type = SimplePOP3Retriever
+server = pop.mail.yahoo.com
+username = longfeey@yahoo.cn 
+password = feilong1984 
+
+[destination]
+type = Maildir
+path = ~/Mail/inbox/
+unixfrom = true
+

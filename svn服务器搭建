@@ -1,0 +1,140 @@
+ubuntu10.10 svn 服务器搭建
+
+1.安装svn
+sudo apt-get install subversion
+
+2.创建svn服务器仓库位置
+sudo mkdit /home/svn,我们以后将svn仓库统一放置于/home/svn下面
+
+3.新建svn存储仓库
+svnadmin create /home/svn/android-515
+
+在做文件配置之前，建议先赋予/home/svn文件夹完全读写权限
+sudo chmod -R 777 */*
+
+4.svn仓库的访问权限配置
+1)svn访问控制配置，
+修改/home/svn/android-515/conf/svnserve.conf：
+anon-access = read
+auth-access = write
+password-db = passwd
+anon-access 和 auth-access 分别指定匿名和有权限用户的权限，默认给匿名用户只读的权限，如果想拒绝匿名用户的访问，只需把 read 改成 none 就能达到目的。password-db 后的 passwd 则为定义用户名及密码的文件路径。这个文件默认跟 snvserve.conf 在同一个目录。
+记住，去掉上述每一句前面的 # ，并且让其顶格
+
+2)分配svn用户和密码
+svn passwd配置格式如下:
+svnuser = password
+编辑/home/svn/android-515/conf/passwd
+ly = 123456
+
+3)配置authz,进行用户权限的分配
+配置信息如下：
+[groups]
+# harry_and_sally = harry,sally
+# harry_sally_and_joe = harry,sally,&joe
+group_admin = ly
+
+# [/foo/bar]
+# harry = rw
+# &joe = r
+# * =
+
+[/]  
+ly = rw 
+* = 
+
+5.导入需要版本控制的文件
+我现在要把/home/flyan/fsl_android2.1下的内容导入到版本库中：
+sudo svn import -m "初始化freescale android2.1版本" /home/flyan/fsl_android2.1 file:///home/svn/android-515
+最后显示：提交后的版本为 1
+
+6.启动svn服务器
+1)停止Subversion服务器：
+killall svnserve
+
+2)启动Subversion服务器：
+sudo svnserve -d -r /home/svn/  --listen-host 10.10.66.145
+其中-d表示在后台运行，-r指定服务器的根目录，访问服务器时就可以直接用svn://服务器ip来访问了。如果服务器有多ip的话--listen-host来指定监听的ip地址.  一般情况下没有，则无须指定，即默认为localhost。         
+对于多个代码仓库,我们在启动时也可以用-r选项来指定服务器根目录,但访问时需要写上每个仓库相对于svn根目录的相对路径.
+比如，我们有两个代码仓库/home/repo1 和/home/repo2,我们用svnserve -d -r /home --listen-host 10.10.66.145来启动,那么在客户端访问时可以用svn://10.10.66.145/repo1和svn: //10.10.66.145/repo2来分别访问两个项目
+
+完成以后，可以用命令或者客户端测试服务器是否搭建成功。
+
+
+友情提醒：
+可以用xinetd来启动svnserve的守护进程。
+先安装xinetd
+sudo apt-get install xinetd
+
+在/etc/xinetd.d/下面新建svn文件
+
+（ 由于/etc/xinetd.d/下的目录是只读的，所以需要用命令来完成新建和读写，
+   新建文件：
+   sudo touch /etc/xinetd.d/svn
+   编辑文件：
+   sudo gedit /etc/xinetd.d/svn 
+）
+
+文件内容如下：
+service svn
+{
+    disable = no
+    port = 3690
+    socket_type = stream
+    protocol = tcp
+    wait = no
+    user = svn
+    server = /usr/bin/svnserve 
+    server_args = -i -r /home/svn
+}
+
+最后，重启xinetd   /etc/init.d/xinetd restart
+
+2）利用 Apache 架设Subversion 服务器
+
+首先为apache安装mod_dav和mod_dav_svn两个模块：
+
+sudo apt-get install libapache2-svn
+
+确定 mod_dav 和 mod_dav_svn 被打开：
+
+a2enmod dav dav_svn
+
+配置Apaache，打开httpd.conf
+
+添加：
+DAV svn
+SVNParentPath /var/svnroot/
+
+[*]
+
+执行sudo svn checkout http://192.168.0.4/svnprojects/projectname
+检出版本库
+
+设定用户的权限和验证
+
+现在不管谁都可以往SVN里塞东西，为了更好的控制，我们还需要设定访问权限，比如让指定的用户可以 commit，其他的只能 checkout。
+
+因为我们在 Apache 上，所以访问权限的控制就可以直接借用 Apache 的，首先为你的用户设定用户名和密码：
+
+先为管理员添加一个帐号，
+
+sudo htpasswd -cmb /home/kokkowon/passwords admin 111111
+
+再增加一个帐号：
+
+sudo htpasswd -mb /home/kokkowon/passwords kokko 222222
+
+然后修改httpd.conf:
+DAV svn
+SVNParentPath /var/svnroot/
+AuthType Basic #验证类型设置
+AuthName "Please Auth your accout" #验证提示框
+AuthUserFile /home/kokkowon/passwords #验证配置文件
+Require valid-user
+
+[*]
+
+说明：
+
+最后，你需要把 版本根目录所在的目录和文件的所有权都改成系统中操作 Apache 的用户，这样在 commit 的时候才会被 Apache 认可。

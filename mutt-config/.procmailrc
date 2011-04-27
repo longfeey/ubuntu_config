@@ -1,0 +1,29 @@
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+SHELL=/bin/bash
+MAILDIR=$HOME/Mail
+DEFAULT=$MAILDIR/inbox
+LOGFILE=$MAILDIR/.procmaillog
+
+:0 
+* ^From.*@mail.ustc.edu.cn 
+USTCstudent
+
+:0
+* ^From.*@ustc.edu.cn 
+USTCteacher
+
+:0
+* ^From.*@bbs.ustc.edu.cn
+ustcbbs
+
+:0 
+* ^From.*@gmail.com 
+Gmail
+
+:0   #最后的这个配置就是指如果上面分类剩下的信件全扔到inbox里
+* .* inbox
+
+# 黑名单（垃圾邮件）
+:0:
+* ^From.*badguy
+/dev/null
