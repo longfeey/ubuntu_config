@@ -81,5 +81,8 @@ sudo apt-get install nfs-kernel-server
 #安装tftp服务器
 sudo apt-get install tftp tftpd
 
+#安装ftp服务器(vsftp)
+sudo apt-get install vsftpd
+
 安装ssh服务器
 sudo apt-get install openssh-server
