@@ -14,6 +14,9 @@ sudo apt-get install unrar
 #安装vim和gvim
 sudo apt-get install vim vim-gnome
 
+#安装串口工具(ckermit)
+sudo apt-get install ckermit
+
 #ghex
 #非常好用的16进制编辑工具，可以直接修改可执行文件。
 sudo apt-get install ghex
@@ -65,8 +68,15 @@ sudo apt-get install cscope
 #添加库函数手册 
 #ubuntu默认是没有安装c语言的库函数man手册的，所以你在man perror 和sendto之类的函数时会显示没有相关文档的问题，这个问题让我郁闷了我好久。解决方法：
 sudo apt-get install manpages-dev 
+
+#version contor system
+
 #下载svn 版本管理工具
-sudo apt-get install subversion
+#sudo apt-get install subversion
+#git 安装
+sudo apt-get install git
+#git patch control
+sudo apt-get install topgit
 
 #服务器安装
 #安装Ubuntu samba服务器
@@ -84,5 +94,14 @@ sudo apt-get install tftp tftpd
 #安装ftp服务器(vsftp)
 sudo apt-get install vsftpd
 
-安装ssh服务器
+#安装ssh服务器
 sudo apt-get install openssh-server
+
+
+#安装mysql数据库
+#sudo apt-get install mysql-server mysql-client
+#安装gui mysql管理工具
+sudo apt-get install mysql-admin
+
+#安装LAMP (linux+apache2+mysql+php)
+sudo apt-get install apache2 mysql-server mysql-client php5 php5-gd php5-mysql
