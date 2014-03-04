@@ -1,0 +1,12 @@
+Host tz-gerrit
+   Hostname tz.otcshare.org
+   IdentityFile ~/.ssh/id_rsa
+   User flyanbiss
+   Port 29418 
+
+Host tzg
+   Hostname tz.otcshare.org
+   IdentityFile ~/.ssh/id_rsa
+   User flyanbiss 
+   Port 29418 
+
