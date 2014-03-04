@@ -1,0 +1,357 @@
+#!/bin/sh
+# Script to start/stop a hostapd-based access point
+#
+# Sample start call "control_ap start wlan0 eth0"
+# Stop with "control_ap stop"
+#
+
+# Symbols for needed programs
+
+# May be set
+AP_SSID=Intel_SmartRouter
+
+# Set AP password
+WPA_SECRET="87654321"
+
+# Set HostAP is open system(no need passwd)
+OPEN_SYSTEM=0
+
+# Choice dnsmasq for dhcp, or else use dhcpd
+USE_DNSMASQ_FOR_DHCP=1
+
+# First 3 octets of IP address for the AP
+AP_ADDR=192.168.2
+
+# Set hostapd binary path
+HOSTAPD=`pwd`/hostapd-0.8/hostapd/hostapd
+
+# rtl8188eu must use rtl871xdrv driver
+DRIVER=rtl871xdrv
+
+# IP address for nameserver
+NAME_SERVER=8.8.8.8
+
+# Set getway addr
+GETWAY=$AP_ADDR.1
+
+# AP Channel, SSID, Encryption method, driver,  and Encryption secret
+AP_CHANNEL=6
+
+ENCRYPT_MODE=3
+
+IPTABLES=/sbin/iptables
+IFCONFIG=/sbin/ifconfig
+DHCPD=/usr/sbin/dhcpd
+
+# Add unmanaged-devices to Networkmanager.conf
+#[keyfile]
+#unmanaged-devices=mac:0c:82:68:10:03:5e
+
+# Symbols for AP and external interfaces
+WIFI_IFACE=$2
+ETHERNET_IFACE=$3
+
+# Write the hostapd configuration file
+create_hostapd_config()
+{
+	cat > $CONFIG_DIR/hostapd.conf << EOF
+auth_algs=3
+beacon_int=100
+country_code=US
+ctrl_interface_group=0
+ctrl_interface=/var/run/hostapd
+dtim_period=2
+dump_file=/tmp/hostapd.dump
+fragm_threshold=2346
+#ht_capab=[HT40-][SHORT-GI-20][SHORT-GI-40][MAX-AMSDU-7935][DSSS_CCK-40]
+#ieee80211d=1
+ieee80211n=1
+ignore_broadcast_ssid=0
+logger_stdout=-1
+logger_stdout_level=2
+logger_syslog=-1
+logger_syslog_level=2
+macaddr_acl=0
+max_num_sta=255
+rts_threshold=2347
+wmm_ac_be_acm=0
+wmm_ac_be_aifs=3
+wmm_ac_be_cwmax=10
+wmm_ac_be_cwmin=4
+wmm_ac_be_txop_limit=0
+wmm_ac_bk_acm=0
+wmm_ac_bk_aifs=7
+wmm_ac_bk_cwmax=10
+wmm_ac_bk_cwmin=4
+wmm_ac_bk_txop_limit=0
+wmm_ac_vi_acm=0
+wmm_ac_vi_aifs=2
+wmm_ac_vi_cwmax=4
+wmm_ac_vi_cwmin=3
+wmm_ac_vi_txop_limit=94
+wmm_ac_vo_acm=0
+wmm_ac_vo_aifs=2
+wmm_ac_vo_cwmax=3
+wmm_ac_vo_cwmin=2
+wmm_ac_vo_txop_limit=47
+wmm_enabled=1
+EOF
+
+	echo "interface=$WIFI_IFACE" >> $CONFIG_DIR/hostapd.conf
+	echo "ssid=$AP_SSID" >> $CONFIG_DIR/hostapd.conf
+	echo "driver=$DRIVER" >> $CONFIG_DIR/hostapd.conf
+	echo "hw_mode=g" >> $CONFIG_DIR/hostapd.conf
+	echo "channel=$AP_CHANNEL" >> $CONFIG_DIR/hostapd.conf
+	if [ $OPEN_SYSTEM -eq 1 ] ;then
+		echo "Open system no need passwd"
+	else
+		echo "wpa=$ENCRYPT_MODE" >> $CONFIG_DIR/hostapd.conf
+		echo "wpa_key_mgmt=WPA-PSK" >> $CONFIG_DIR/hostapd.conf
+		echo "wpa_pairwise=TKIP CCMP" >> $CONFIG_DIR/hostapd.conf
+		echo "rsn_pairwise=CCMP" >> $CONFIG_DIR/hostapd.conf
+		echo "wpa_passphrase=$WPA_SECRET" >> $CONFIG_DIR/hostapd.conf
+	fi
+}
+
+# dnsmasq config (dhcp + dns)
+create_dnsmasq_config()
+{
+cat << EOF > $CONFIG_DIR/dnsmasq.conf
+interface=${WIFI_IFACE}
+bind-interfaces
+dhcp-range=$AP_ADDR.100,$AP_ADDR.254,255.255.255.0,24h
+dhcp-option=option:router,$AP_ADDR.1
+EOF
+}
+
+start_dnsmasq()
+{
+    dnsmasq -C $CONFDIR/dnsmasq.conf -x $CONFDIR/dnsmasq.pid
+}
+
+create_dhcp_config()
+{
+	# dhcpd needs to have a leases file available - create it if needed
+	if [ ! -f /var/lib/dhcp/db/dhcpd.leases ]; then
+		mkdir -p /var/lib/dhcp/db
+		touch /var/lib/dhcp/db/dhcpd.leases
+	fi
+	# Write the DHCP server configuration file
+	echo "option domain-name-servers $NAME_SERVER;" > $CONFIG_DIR/dhcpd.conf
+	echo "default-lease-time 600;" >> $CONFIG_DIR/dhcpd.conf
+	echo "max-lease-time 7200;" >> $CONFIG_DIR/dhcpd.conf
+	echo "ddns-update-style none; ddns-updates off;" >> $CONFIG_DIR/dhcpd.conf
+	echo "subnet $AP_ADDR.0 netmask 255.255.255.0 {" >> $CONFIG_DIR/dhcpd.conf
+	echo "        range $AP_ADDR.100 $AP_ADDR.229;" >> $CONFIG_DIR/dhcpd.conf
+	echo "        option subnet-mask 255.255.255.0;" >> $CONFIG_DIR/dhcpd.conf
+	echo "        option broadcast-address $AP_ADDR.255;" >> $CONFIG_DIR/dhcpd.conf
+	echo "        option routers $AP_ADDR.1;" >> $CONFIG_DIR/dhcpd.conf
+	echo "}" >> $CONFIG_DIR/dhcpd.conf
+	cp $CONFIG_DIR/dhcpd.conf /etc/dhcp/
+}
+
+create_nat_ruler()
+{
+	# Disable packet forwarding
+	OLD_IP_FORWARD=`cat /proc/sys/net/ipv4/ip_forward`
+	echo 0 > /proc/sys/net/ipv4/ip_forward
+
+	#Set up forwarding
+	$IPTABLES -t nat -A POSTROUTING -o $ETHERNET_IFACE -j MASQUERADE
+	$IPTABLES -A FORWARD -i $ETHERNET_IFACE -o $WIFI_IFACE -m state \
+	--state RELATED,ESTABLISHED -j ACCEPT
+	$IPTABLES -A FORWARD -i $WIFI_IFACE -o $ETHERNET_IFACE -j ACCEPT
+
+	# Enable packet forwarding
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+}
+
+remove_nat_ruler()
+{
+	$IPTABLES -t nat -D POSTROUTING -o $ETHERNET_IFACE -j MASQUERADE
+	$IPTABLES -D FORWARD -i $ETHERNET_IFACE -o $WIFI_IFACE -m state \
+	--state RELATED,ESTABLISHED -j ACCEPT
+	$IPTABLES -D FORWARD -i $WIFI_IFACE -o $ETHERNET_IFACE -j ACCEPT
+	echo $OLD_IP_FORWARD > /proc/sys/net/ipv4/ip_forward
+}
+
+start_dhcp()
+{
+	# Bring up the DHCP server
+	echo "start dhcpd service"
+	#$DHCPD -cf ~/dhcpd.conf $WIFI_IFACE
+	#dhcpd -pf /var/run/dhcp-server/dhcpd.pid
+	#$DHCPD $WIFI_IFACE -pf /var/run/dhcp-server/dhcpd.pid
+
+	# start dhcpd server
+	echo "start dhcpd service"
+	$DHCPD $WIFI_IFACE -pf /var/run/dhcp-server/dhcpd.pid
+
+}
+
+start_hostapd()
+{
+	echo "Starting AP mode for $WIFI_IFACE at address $AP_ADDR.1"
+	# Stop any existing hostapd and dhcpd daemons
+	killall -q hostapd
+	killall -q dhcpd
+
+	# Get the AP interface in the right state
+	$IFCONFIG $WIFI_IFACE down
+	$IFCONFIG $WIFI_IFACE up
+	$IFCONFIG $WIFI_IFACE $AP_ADDR.1
+
+	# Bring up hostapd
+	$HOSTAPD -d -B $CONFIG_DIR/hostapd.conf
+}
+
+stop_hostapd()
+{
+	echo "Stopping AP mode"
+	# Stop hostapd and dhcpd daemons
+	killall hostapd
+	killall dhcpd
+
+    # exiting
+	if [ -f $CONFIG_DIR ]; then
+		for x in $CONFDIR/*.pid; do
+			# even if the $CONFDIR is empty, the for loop will assign
+			# a value in $x. so we need to check if the value is a file
+			[ -f $x ] && kill -9 $(cat $x)
+		done
+
+		rm -rf $CONFIG_DIR
+	fi
+}
+
+get_macaddr() {
+    ip link show "$1" | grep ether | grep -Eo '([0-9a-f]{2}:){5}[0-9a-f]{2}[[:space:]]' | tr -d '[[:space:]]'
+}
+
+get_avail_bridge() {
+    for i in {0..100}; do
+        curr_bridge=$(brctl show | grep "br$i" | cut -s -f1)
+        if [[ -z $curr_bridge ]]; then
+            echo "br$i"
+            return
+        fi
+    done
+}
+
+get_new_macaddr() {
+    OLDMAC=$(get_macaddr "$1")
+    for i in {20..255}; do
+        NEWMAC="${OLDMAC%:*}:$(printf %02x $i)"
+        (ip link | grep "ether ${NEWMAC}" > /dev/null 2>&1) || break
+    done
+    echo $NEWMAC
+}
+
+ADDED_UNMANAGED=0
+NETWORKMANAGER_CONF=/etc/NetworkManager/NetworkManager.conf
+
+networkmanager_add_unmanaged() {
+    [ ! -d ${NETWORKMANAGER_CONF%/*} ] && return
+    [ -f ${NETWORKMANAGER_CONF} ] || touch ${NETWORKMANAGER_CONF}
+    if [ -z "$2" ]; then
+        MAC=$(get_macaddr "$1")
+    else
+        MAC="$2"
+    fi
+    UNMANAGED=$(grep -m1 -Eo "^unmanaged-devices=.*" ${NETWORKMANAGER_CONF})
+    [ $UNMANAGED == *mac:${MAC}* ] && return
+    echo -n "Network Manager config found, set $1 as unmanaged device... "
+    grep -E '^\[keyfile\]' ${NETWORKMANAGER_CONF} > /dev/null 2>&1 || echo -e '\n\n[keyfile]' >> ${NETWORKMANAGER_CONF}
+    if [ -z ${UNMANAGED} ]; then
+        sed -e "s/^\(\[keyfile\].*\)$/\1\nunmanaged-devices=mac:${MAC}/" -i ${NETWORKMANAGER_CONF}
+    else
+        NEW_UNMANAGED=$(echo "${UNMANAGED}" | sed -e "s/^\([[:alnum:]=:;-]*\)/\1;mac:${MAC}/")
+        sed -e "s/^${UNMANAGED}/${NEW_UNMANAGED}/" -i ${NETWORKMANAGER_CONF}
+    fi
+    ADDED_UNMANAGED=1
+    sleep 2
+    echo "DONE"
+}
+
+networkmanager_rm_unmanaged() {
+    [[ $ADDED_UNMANAGED -eq 0 ]] && return
+    [[ ! -f ${NETWORKMANAGER_CONF} ]] && return
+    if [[ -z "$2" ]]; then
+        MAC=$(get_macaddr "$1")
+    else
+        MAC="$2"
+    fi
+    UNMANAGED=$(grep -m1 -Eo "^unmanaged-devices=.*" ${NETWORKMANAGER_CONF})
+    if [[ $UNMANAGED != *\;* ]]; then
+        sed -e "/^unmanaged-devices=mac:${MAC}/d" -i ${NETWORKMANAGER_CONF}
+    else
+        NEW_UNMANAGED=$(echo ${UNMANAGED} | sed -e "s/;mac:${MAC}//")
+        sed -e "s/^${UNMANAGED}/${NEW_UNMANAGED}/" -i ${NETWORKMANAGER_CONF}
+    fi
+    sleep 2
+}
+
+
+usage()
+{
+	echo "Usage:"
+	echo "$0 start AP-iface net_iface"
+	echo "or"
+	echo "$0 stop"
+	exit 1
+}
+
+main_process()
+{
+
+	case "$1" in
+	start)
+		echo "Config dir: $CONFIG_DIR"
+		if [ $# -ne 3 ]
+		then
+			echo "Usage: $0 start AP_iface NET_iface"
+			exit 1
+		else
+			# Set the hostapd,dhcp/dnsmasq configure file path
+			#CONFIG_DIR=$(mktemp -d /tmp/control_ap.config.XXXXX)
+			CONFIG_DIR=/tmp/control_ap
+			mkdir $CONFIG_DIR
+#			CONFIG_DIR=$(mktemp -d /tmp/control_ap.config.XXXXX)
+			#chown -R $USER:$USER $CONFIG_DIR
+			chmod 777 $CONFIG_DIR
+
+			create_hostapd_config
+
+			if [ $USE_DNSMASQ_FOR_DHCP -eq 1 ]; then
+				echo "use dnsmasq for dhcp server"
+				create_dnsmasq_config
+				start_dnsmasq
+			else
+				echo "use dhcpd for dhcp server"
+				create_dhcp_config
+				start_dhcp
+			fi
+			create_nat_ruler
+			#networkmanager_add_unmanaged $WIFI_IFACE
+			#start_dhcp
+			start_hostapd
+		fi
+	;;
+	stop)
+		if [ $# -ne 1 ]
+		then
+			echo "Usage: $0 stop"
+			exit 1
+		else
+			stop_hostapd
+			#remove_nat_ruler
+			#networkmanager_rm_unmanaged $WIFI_IFACE
+		fi
+	;;
+	*)
+		usage
+		;;
+	esac
+}
+
+main_process $*
